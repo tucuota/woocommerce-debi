@@ -21,19 +21,6 @@ class DEBIPRO_Payment_Gateway extends WC_Payment_Gateway
     private $sandbox_mode;
     private $token_debi_live;
     private $token_debi_sandbox;
-    private $interest_quota_0;
-    private $interest_quota_1;
-    private $interest_quota_2;
-    private $interest_quota_3;
-    private $interest_quota_4;
-    private $interest_quota_5;
-    private $interest_quota_6;
-    private $interest_quota_7;
-    private $interest_quota_8;
-    private $interest_quota_9;
-    private $interest_quota_10;
-    private $interest_quota_11;
-    private $interest_quota_12;
 
     public function __construct()
     {
@@ -49,19 +36,6 @@ class DEBIPRO_Payment_Gateway extends WC_Payment_Gateway
         $this->sandbox_mode = $this->get_option('sandbox_mode');
         $this->token_debi_live = $this->get_option('token_debi_live');
         $this->token_debi_sandbox = $this->get_option('token_debi_sandbox');
-        $this->interest_quota_0 = $this->get_option('interest_quota_0');
-        $this->interest_quota_1 = $this->get_option('interest_quota_1');
-        $this->interest_quota_2 = $this->get_option('interest_quota_2');
-        $this->interest_quota_3 = $this->get_option('interest_quota_3');
-        $this->interest_quota_4 = $this->get_option('interest_quota_4');
-        $this->interest_quota_5 = $this->get_option('interest_quota_5');
-        $this->interest_quota_6 = $this->get_option('interest_quota_6');
-        $this->interest_quota_7 = $this->get_option('interest_quota_7');
-        $this->interest_quota_8 = $this->get_option('interest_quota_8');
-        $this->interest_quota_9 = $this->get_option('interest_quota_9');
-        $this->interest_quota_10 = $this->get_option('interest_quota_10');
-        $this->interest_quota_11 = $this->get_option('interest_quota_11');
-        $this->interest_quota_12 = $this->get_option('interest_quota_12');
 
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
     }
@@ -104,33 +78,7 @@ class DEBIPRO_Payment_Gateway extends WC_Payment_Gateway
                 'description' => __('Generate token in developer section of debi-test.pro', 'debi-payment-for-woocommerce'),
 
             ),
-
-            'interest_quota_0' => array(
-                'title' => __('% interest for payment in two business days with debit', 'debi-payment-for-woocommerce'),
-                'type' => 'number',
-                'default' => '',
-                'custom_attributes' => array(
-                    'step' => 'any',
-                    'min' => '0',
-                    'max' => '100',
-                ),
-            ),
         );
-        
-        // Generate interest quota fields dynamically (1-12)
-        for ($i = 1; $i <= 12; $i++) {
-            $this->form_fields['interest_quota_' . $i] = array(
-                // translators: %d is the installment count
-                'title' => sprintf(_n('%% interest for %1$d installment', '%% interest for %1$d installments', $i, 'debi-payment-for-woocommerce'), $i),
-                'type' => 'number',
-                'default' => '',
-                'custom_attributes' => array(
-                    'step' => 'any',
-                    'min' => '0',
-                    'max' => '100',
-                ),
-            );
-        }
     }
 
     public function process_payment($order_id)
@@ -148,11 +96,20 @@ class DEBIPRO_Payment_Gateway extends WC_Payment_Gateway
 
         $items = $woocommerce->cart->get_cart();
 
+        $product_id = null;
+        $product_title = '';
+        $monthly_interest_percentage = 0;
+        
         foreach ($items as $item => $values) {
             $_product = wc_get_product($values['data']->get_id());
             $product_title = $_product->get_title();
             $product_id = $_product->get_id();
+            
+            // Get monthly interest percentage from product custom field
+            $monthly_interest_percentage = get_post_meta($product_id, '_monthly_interest_percentage', true);
+            $monthly_interest_percentage = is_numeric($monthly_interest_percentage) ? floatval($monthly_interest_percentage) : 0;
         }
+        
         $name = $woocommerce->customer->get_billing_last_name() . ', ' . $woocommerce->customer->get_billing_first_name();
         $email = $woocommerce->customer->get_billing_email();
 
@@ -163,16 +120,15 @@ class DEBIPRO_Payment_Gateway extends WC_Payment_Gateway
         // Sanitize and validate input
         $quotas = isset($_POST[$this->id . '-cuotas']) ? absint(wp_unslash($_POST[$this->id . '-cuotas'])) : 0;
         
-        if ($quotas < 0 || $quotas > 12) {
+        if ($quotas < 1) {
             wc_add_notice(__('Invalid number of installments selected.', 'debi-payment-for-woocommerce'), 'error');
             return false;
         }
         
-        $nid_property = 'interest_quota_' . $quotas;
-        $interest = $this->{$nid_property};
-        $interest = is_numeric($interest) ? floatval($interest) : 0;
+        // Calculate total interest based on monthly interest and number of installments
+        $total_interest_percentage = $monthly_interest_percentage * $quotas;
         
-        $final_price = (float)$order->get_total() + ((float)$order->get_total() * (float)$interest / 100);
+        $final_price = (float)$order->get_total() + ((float)$order->get_total() * (float)$total_interest_percentage / 100);
         
         $DNIoCUIL = isset($_POST['participant_id']) ? sanitize_text_field(wp_unslash($_POST['participant_id'])) : '';
         $number = isset($_POST[$this->id . '-payment_method_number']) ? sanitize_text_field(wp_unslash($_POST[$this->id . '-payment_method_number'])) : '';
@@ -321,11 +277,25 @@ class DEBIPRO_Payment_Gateway extends WC_Payment_Gateway
             global $woocommerce;
             $amount = $woocommerce->cart->total;
 
+            // Get product info and custom fields for financing
+            $product_id = null;
+            $product_title = '';
+            $monthly_interest_percentage = 0;
+            $maximum_installments_allowed = 12;
+
             $items = $woocommerce->cart->get_cart();
             foreach ($items as $item => $values) {
                 $_product = wc_get_product($values['data']->get_id());
                 $product_title = $_product->get_title();
                 $product_id = $_product->get_id();
+                
+                // Get custom fields for financing
+                $monthly_interest_percentage = get_post_meta($product_id, '_monthly_interest_percentage', true);
+                $maximum_installments_allowed = get_post_meta($product_id, '_maximum_installments_allowed', true);
+                
+                // Set defaults if not configured
+                $monthly_interest_percentage = is_numeric($monthly_interest_percentage) ? floatval($monthly_interest_percentage) : 0;
+                $maximum_installments_allowed = is_numeric($maximum_installments_allowed) && $maximum_installments_allowed > 0 ? intval($maximum_installments_allowed) : 12;
             }
 ?>
 
@@ -337,37 +307,25 @@ class DEBIPRO_Payment_Gateway extends WC_Payment_Gateway
                     <select id="<?php echo esc_attr($this->id); ?>-cuotas" name="<?php echo esc_attr($this->id); ?>-cuotas">
                         <option value="" disabled selected><?php esc_html_e('Select number of installments', 'debi-payment-for-woocommerce'); ?></option>
                         <?php
-                        // Render installment options
-                        for ($i = 0; $i <= 12; $i++) {
-                            $property = 'interest_quota_' . $i;
-                            // Check if property exists and is not empty string (but allow 0)
-                            if (isset($this->$property) && $this->$property !== '') {
-                                $final_amount = number_format($amount + $amount * $this->{$property} / 100, 2, ',', ' ');
-                                $final_quota = number_format($amount / ($i == 0 ? 1 : $i) + $amount * $this->{$property} / ($i == 0 ? 1 : $i) / 100, 2, ',', ' ');
-                                
-                                $extra_text = ($i == 0) ? ' ' . __('DEBIT CARD ONLY', 'debi-payment-for-woocommerce') : '';
-                                $text = $this->get_installment_text($i == 0 ? 1 : $i, $final_quota, $final_amount, $extra_text);
-                                ?>
-                                <option value="<?php echo esc_attr($i); ?>"><?php echo esc_html($text); ?></option>
-                                <?php
+                        // Render installment options based on product's financing configuration
+                        for ($i = 1; $i <= $maximum_installments_allowed; $i++) {
+                            // Calculate interest for this number of installments
+                            $total_interest_percentage = $monthly_interest_percentage * $i;
+                            $final_amount = $amount + ($amount * $total_interest_percentage / 100);
+                            $quota_amount = $final_amount / $i;
+                            
+                            $final_amount_formatted = number_format($final_amount, 2, ',', ' ');
+                            $quota_amount_formatted = number_format($quota_amount, 2, ',', ' ');
+                            
+                            if ($monthly_interest_percentage == 0) {
+                                // No interest option
+                                $text = $this->get_installment_no_interest_text($i, $quota_amount_formatted);
+                            } else {
+                                // With interest option
+                                $text = $this->get_installment_text($i, $quota_amount_formatted, $final_amount_formatted);
                             }
-                        }
-
-                        // Default options if no interest values are configured
-                        $has_any_interest = false;
-                        for ($i = 0; $i <= 12; $i++) {
-                            $property = 'interest_quota_' . $i;
-                            if (isset($this->$property) && $this->$property !== '') {
-                                $has_any_interest = true;
-                                break;
-                            }
-                        }
-
-                        if (!$has_any_interest) {
                             ?>
-                            <option value="1"><?php echo esc_html($this->get_installment_no_interest_text(1, number_format($amount, 2, ',', ' '))); ?></option>
-                            <option value="2"><?php echo esc_html($this->get_installment_no_interest_text(2, number_format($amount / 2, 2, ',', ' '))); ?></option>
-                            <option value="3"><?php echo esc_html($this->get_installment_no_interest_text(3, number_format($amount / 3, 2, ',', ' '))); ?></option>
+                            <option value="<?php echo esc_attr($i); ?>"><?php echo esc_html($text); ?></option>
                             <?php
                         }
                         ?>
