@@ -125,10 +125,17 @@ class DEBIPRO_Payment_Gateway extends WC_Payment_Gateway
             return false;
         }
         
-        // Calculate total interest based on monthly interest and number of installments
-        $total_interest_percentage = $monthly_interest_percentage * $quotas;
-        
-        $final_price = (float)$order->get_total() + ((float)$order->get_total() * (float)$total_interest_percentage / 100);
+        // Calculate final price using compound interest formula
+        // First period has no interest, from second period onwards: amount * (1 + rate)^(t-1)
+        $order_total = (float)$order->get_total();
+        if ($quotas == 1 || $monthly_interest_percentage == 0) {
+            // No interest for single installment or when rate is 0
+            $final_price = $order_total;
+        } else {
+            // Compound interest: amount * (1 + rate)^(t-1)
+            $rate = $monthly_interest_percentage / 100;
+            $final_price = $order_total * pow(1 + $rate, $quotas - 1);
+        }
         
         $DNIoCUIL = isset($_POST['participant_id']) ? sanitize_text_field(wp_unslash($_POST['participant_id'])) : '';
         $number = isset($_POST[$this->id . '-payment_method_number']) ? sanitize_text_field(wp_unslash($_POST[$this->id . '-payment_method_number'])) : '';
@@ -317,9 +324,17 @@ class DEBIPRO_Payment_Gateway extends WC_Payment_Gateway
                         <?php
                         // Render installment options based on product's financing configuration
                         for ($i = $minimum_installments_allowed; $i <= $maximum_installments_allowed; $i++) {
-                            // Calculate interest for this number of installments
-                            $total_interest_percentage = $monthly_interest_percentage * $i;
-                            $final_amount = $amount + ($amount * $total_interest_percentage / 100);
+                            // Calculate interest using compound interest formula
+                            // First period has no interest, from second period onwards: amount * (1 + rate)^(t-1)
+                            if ($i == 1 || $monthly_interest_percentage == 0) {
+                                // No interest for single installment or when rate is 0
+                                $final_amount = $amount;
+                            } else {
+                                // Compound interest: amount * (1 + rate)^(t-1)
+                                $rate = $monthly_interest_percentage / 100;
+                                $final_amount = $amount * pow(1 + $rate, $i - 1);
+                            }
+                            
                             $quota_amount = $final_amount / $i;
                             
                             $final_amount_formatted = number_format($final_amount, 2, ',', ' ');
