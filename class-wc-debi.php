@@ -281,6 +281,7 @@ class DEBIPRO_Payment_Gateway extends WC_Payment_Gateway
             $product_id = null;
             $product_title = '';
             $monthly_interest_percentage = 0;
+            $minimum_installments_allowed = 1;
             $maximum_installments_allowed = 12;
 
             $items = $woocommerce->cart->get_cart();
@@ -291,11 +292,18 @@ class DEBIPRO_Payment_Gateway extends WC_Payment_Gateway
                 
                 // Get custom fields for financing
                 $monthly_interest_percentage = get_post_meta($product_id, '_monthly_interest_percentage', true);
+                $minimum_installments_allowed = get_post_meta($product_id, '_minimum_installments_allowed', true);
                 $maximum_installments_allowed = get_post_meta($product_id, '_maximum_installments_allowed', true);
                 
                 // Set defaults if not configured
                 $monthly_interest_percentage = is_numeric($monthly_interest_percentage) ? floatval($monthly_interest_percentage) : 0;
+                $minimum_installments_allowed = is_numeric($minimum_installments_allowed) && $minimum_installments_allowed > 0 ? intval($minimum_installments_allowed) : 1;
                 $maximum_installments_allowed = is_numeric($maximum_installments_allowed) && $maximum_installments_allowed > 0 ? intval($maximum_installments_allowed) : 12;
+                
+                // Ensure minimum is not greater than maximum
+                if ($minimum_installments_allowed > $maximum_installments_allowed) {
+                    $minimum_installments_allowed = $maximum_installments_allowed;
+                }
             }
 ?>
 
@@ -308,7 +316,7 @@ class DEBIPRO_Payment_Gateway extends WC_Payment_Gateway
                         <option value="" disabled selected><?php esc_html_e('Select number of installments', 'debi-payment-for-woocommerce'); ?></option>
                         <?php
                         // Render installment options based on product's financing configuration
-                        for ($i = 1; $i <= $maximum_installments_allowed; $i++) {
+                        for ($i = $minimum_installments_allowed; $i <= $maximum_installments_allowed; $i++) {
                             // Calculate interest for this number of installments
                             $total_interest_percentage = $monthly_interest_percentage * $i;
                             $final_amount = $amount + ($amount * $total_interest_percentage / 100);
